@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADIDA - Effetto dell'Aggregazione (s)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        body {
+            background-color: #121824;
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            background: #1b2332;
+            border: 1px solid #283245;
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            background: #121824;
+            padding: 16px 20px;
+            border-radius: 12px;
+            border: 1px solid #283245;
+        }
+
+        .control-label {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #8a9bb0;
+            white-space: nowrap;
+        }
+
+        .slider-badge {
+            background: rgba(255, 77, 77, 0.15);
+            border: 1px solid #ff4d4d;
+            color: #ff4d4d;
+            font-size: 1.2rem;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 8px;
+            min-width: 48px;
+            text-align: center;
+        }
+
+        .range-slider {
+            flex-grow: 1;
+            height: 8px;
+            border-radius: 4px;
+            background: #283245;
+            outline: none;
+            cursor: pointer;
+            accent-color: #ff4d4d;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 480px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- CONTROLLO UNICO: SLIDER S -->
+        <div class="controls">
+            <span class="control-label">Dimensione Blocco di Aggregazione (s):</span>
+            <input type="range" class="range-slider" id="sliderS" min="1" max="12" value="1" step="1">
+            <span class="slider-badge" id="badgeS">1</span>
+        </div>
+
+        <!-- GRAFICO UNICO -->
+        <div class="chart-container">
+            <canvas id="chartCanvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const T = 48;
+        const alpha = 0.35;
+        let chart = null;
+
+        // Domanda Reale Intermittente con variazioni di intensità
+        function getDemand() {
+            let Y = new Array(T).fill(0);
+            // Fase 1: Picchi Medi
+            Y[2]  = 12;
+            Y[7]  = 15;
+            // Fase 2: Boom / Picchi Elevati
+            Y[14] = 35;
+            Y[19] = 42;
+            Y[25] = 38;
+            // Fase 3: Contrazione / Picchi Bassi
+            Y[33] = 8;
+            Y[40] = 6;
+            return Y;
+        }
+
+        // Calcolo Previsione ADIDA per un generico s
+        // Se s = 1, equivale esattamente allo Smorzamento Esponenziale Semplice
+        function computeForecast(Y, s) {
+            let forecast = new Array(T).fill(0);
+            const initialRate = 2.0;
+
+            if (s === 1) {
+                // Smorzamento Esponenziale Semplice (SES)
+                let S = initialRate;
+                for (let t = 0; t < T; t++) {
+                    forecast[t] = S;
+                    S = alpha * Y[t] + (1 - alpha) * S;
+                }
+            } else {
+                // ADIDA Aggregato (s > 1)
+                for (let t = 0; t < T; t++) {
+                    let completedBuckets = Math.floor(t / s);
+                    let dailyRate = initialRate;
+
+                    if (completedBuckets > 0) {
+                        let X = [];
+                        for (let b = 0; b < completedBuckets; b++) {
+                            let start = b * s;
+                            let end = (b + 1) * s;
+                            let sum = 0;
+                            for (let i = start; i < end; i++) sum += Y[i];
+                            X.push(sum);
+                        }
+
+                        let S = X[0];
+                        for (let b = 1; b < X.length; b++) {
+                            S = alpha * X[b] + (1 - alpha) * S;
+                        }
+                        dailyRate = S / s;
+                    }
+                    forecast[t] = dailyRate;
+                }
+            }
+            return forecast;
+        }
+
+        function updateChart() {
+            const s = parseInt(document.getElementById('sliderS').value);
+            document.getElementById('badgeS').innerText = s;
+
+            const Y = getDemand();
+            const forecast = computeForecast(Y, s);
+
+            chart.data.datasets[0].data = Y;
+            chart.data.datasets[1].data = forecast;
+
+            if (s === 1) {
+                chart.data.datasets[1].label = 'Previsione SES (s = 1) - Reattività a "Dente di Sega"';
+                chart.data.datasets[1].borderColor = '#ff4d4d';
+                chart.data.datasets[1].stepped = false;
+                chart.data.datasets[1].borderDash = [4, 4];
+            } else {
+                chart.data.datasets[1].label = `Previsione ADIDA (s = ${s})`;
+                chart.data.datasets[1].borderColor = '#ff4d4d';
+                chart.data.datasets[1].stepped = 'middle';
+                chart.data.datasets[1].borderDash = [];
+            }
+
+            chart.update();
+        }
+
+        function initChart() {
+            const labels = Array.from({ length: T }, (_, i) => `t=${i + 1}`);
+            const ctx = document.getElementById('chartCanvas').getContext('2d');
+
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Domanda Reale (Y_t)',
+                            data: [],
+                            backgroundColor: 'rgba(120, 136, 155, 0.45)',
+                            borderColor: '#78889b',
+                            borderWidth: 1.5,
+                            barPercentage: 0.5,
+                            order: 2
+                        },
+                        {
+                            label: 'Previsione',
+                            data: [],
+                            type: 'line',
+                            borderColor: '#ff4d4d',
+                            borderWidth: 3,
+                            pointRadius: 0,
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 150 },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#ffffff',
+                                font: { size: 13, weight: '600' }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} pz`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#283245' },
+                            ticks: { color: '#8a9bb0', font: { size: 11 } }
+                        },
+                        y: {
+                            grid: { color: '#283245' },
+                            ticks: { color: '#8a9bb0' },
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Quantità / Tasso Giornaliero Previsto',
+                                color: '#8a9bb0',
+                                font: { size: 12, weight: '600' }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            document.getElementById('sliderS').addEventListener('input', updateChart);
+            updateChart();
+        });
+    </script>
+</body>
+</html>
